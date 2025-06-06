@@ -13,6 +13,8 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: true,
+    // Add debug mode to help troubleshoot auth issues
+    debug: import.meta.env.DEV,
   },
 });
 

@@ -52,14 +52,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   // Fetch user profile and related data
   const fetchUserData = async (userId: string) => {
     try {
-      // Don't set loading to true here if it's already being managed by the caller
+      console.log("Fetching user data for:", userId);
+
+      // Add timeout for individual fetch operations
+      const fetchWithTimeout = async (
+        promise: Promise<any>,
+        timeoutMs: number = 5000,
+      ) => {
+        return Promise.race([
+          promise,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Fetch timeout")), timeoutMs),
+          ),
+        ]);
+      };
 
       // Fetch user profile
-      const { data: userData, error: userError } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", userId)
-        .single();
+      const { data: userData, error: userError } = await fetchWithTimeout(
+        supabase.from("users").select("*").eq("id", userId).single(),
+      );
 
       if (userError) {
         console.error("Error fetching user profile:", userError);
@@ -72,27 +83,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         return;
       }
 
+      console.log("User data fetched:", userData);
       setUser(userData);
 
       // Fetch user's chapter and role
-      const { data: linkData, error: linkError } = await supabase
-        .from("user_chapter_links")
-        .select(
-          `
-          *,
-          chapters(*),
-          roles(*)
-        `,
-        )
-        .eq("user_id", userId)
-        .eq("is_active", true)
-        .eq("is_primary", true)
-        .single();
+      const { data: linkData, error: linkError } = await fetchWithTimeout(
+        supabase
+          .from("user_chapter_links")
+          .select(
+            `
+            *,
+            chapters(*),
+            roles(*)
+          `,
+          )
+          .eq("user_id", userId)
+          .eq("is_active", true)
+          .eq("is_primary", true)
+          .single(),
+      );
 
       if (linkError) {
         if (linkError.code !== "PGRST116") {
           console.error("Error fetching user chapter link:", linkError);
         }
+        console.log(
+          "No chapter link found, user can still access basic features",
+        );
         // User might not have a chapter link yet, which is okay
         // Keep the user data but clear chapter/role data
         setChapter(null);
@@ -103,6 +120,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       }
 
       if (linkData) {
+        console.log("Chapter link data fetched:", linkData);
         setUserChapterLink(linkData);
         setChapter(linkData.chapters);
         setRole(linkData.roles);
@@ -144,22 +162,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         },
       });
 
-      if (authError) return { error: authError.message };
+      if (authError) {
+        // Handle specific OAuth configuration errors
+        if (
+          authError.message.includes(
+            "OAuth authorization request does not exist",
+          ) ||
+          authError.message.includes(
+            "Failed to fetch details for API authorization request",
+          )
+        ) {
+          return {
+            error:
+              "Authentication configuration error. Please contact support or try again later. If you're the administrator, check your Supabase Auth settings.",
+          };
+        }
+        return { error: authError.message };
+      }
       if (!authData.user) return { error: "Failed to create user" };
 
-      // Check if user needs email confirmation
-      const needsConfirmation =
-        !authData.session && authData.user && !authData.user.email_confirmed_at;
+      // Check if email confirmation is required (data.session will be null)
+      const needsConfirmation = !authData.session;
 
-      // Store signup data in user metadata for later profile creation
+      console.log("Signup result:", {
+        hasSession: !!authData.session,
+        hasUser: !!authData.user,
+        emailConfirmed: authData.user?.email_confirmed_at,
+        needsConfirmation,
+      });
+
+      // If email confirmation is required, don't create profile yet
       if (needsConfirmation) {
+        console.log(
+          "Email confirmation required - profile will be created after confirmation",
+        );
         return { needsConfirmation: true };
       }
 
       // If no confirmation needed, create profile immediately
+      console.log("No email confirmation needed - creating profile now");
       await createUserProfile(authData.user.id, data);
       return { needsConfirmation: false };
     } catch (error) {
+      console.error("Signup error:", error);
       return { error: "An unexpected error occurred" };
     } finally {
       setLoading(false);
@@ -241,6 +286,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       });
 
       if (error) {
+        // Handle specific OAuth configuration errors
+        if (
+          error.message.includes(
+            "OAuth authorization request does not exist",
+          ) ||
+          error.message.includes(
+            "Failed to fetch details for API authorization request",
+          )
+        ) {
+          return {
+            error:
+              "Authentication configuration error. Please contact support or try again later. If you're the administrator, check your Supabase Auth settings.",
+          };
+        }
         // Check if it's an email confirmation error
         if (error.message.includes("Email not confirmed")) {
           return {
@@ -299,11 +358,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   // Initialize auth state
   useEffect(() => {
     let mounted = true;
+    let timeoutId: NodeJS.Timeout;
+
+    // Add a timeout to prevent infinite loading
+    const setLoadingTimeout = () => {
+      timeoutId = setTimeout(() => {
+        if (mounted) {
+          console.warn(
+            "Auth initialization timed out, falling back to login screen",
+          );
+          setLoading(false);
+          setUser(null);
+          setChapter(null);
+          setRole(null);
+          setUserChapterLink(null);
+        }
+      }, 10000); // 10 second timeout
+    };
 
     // Get initial session
     const initializeAuth = async () => {
       try {
         setLoading(true);
+        setLoadingTimeout();
 
         const {
           data: { session },
@@ -313,6 +390,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         if (error) {
           console.error("Error getting session:", error);
           if (mounted) {
+            clearTimeout(timeoutId);
             setLoading(false);
           }
           return;
@@ -325,9 +403,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           if (session?.user) {
             // Fetch user data but don't set loading to false here
             // fetchUserData will handle setting loading to false
-            await fetchUserData(session.user.id);
+            try {
+              await fetchUserData(session.user.id);
+              clearTimeout(timeoutId);
+            } catch (fetchError) {
+              console.error("Error fetching user data:", fetchError);
+              clearTimeout(timeoutId);
+              setLoading(false);
+            }
           } else {
             // No session, clear everything and stop loading
+            clearTimeout(timeoutId);
             setUser(null);
             setChapter(null);
             setRole(null);
@@ -338,6 +424,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       } catch (error) {
         console.error("Error initializing auth:", error);
         if (mounted) {
+          clearTimeout(timeoutId);
           setUser(null);
           setChapter(null);
           setRole(null);
@@ -372,6 +459,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           // If user doesn't have a profile yet, create it from metadata
           if (!existingUser && session.user.user_metadata) {
             try {
+              console.log(
+                "Creating profile for confirmed user:",
+                session.user.id,
+              );
               const metadata = session.user.user_metadata;
               await createUserProfile(session.user.id, {
                 firstName: metadata.first_name || "",
@@ -383,6 +474,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
                 chapterCode: metadata.chapter_code || "",
                 roleName: metadata.role_name || "Social Chair",
               });
+              console.log("Profile created successfully for confirmed user");
             } catch (error) {
               console.error(
                 "Error creating user profile after confirmation:",
@@ -407,6 +499,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     // Cleanup function
     return () => {
       mounted = false;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       subscription.unsubscribe();
     };
   }, []);

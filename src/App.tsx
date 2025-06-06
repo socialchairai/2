@@ -1,6 +1,7 @@
-import { Suspense, useState } from "react";
-import { useRoutes, Routes, Route } from "react-router-dom";
+import { Suspense, useState, useEffect } from "react";
+import { useRoutes, Routes, Route, useNavigate } from "react-router-dom";
 import { useAuth } from "./contexts/AuthContext";
+import { supabase } from "./lib/supabase";
 import Home from "./components/home";
 import AuthScreen from "./components/auth/AuthScreen";
 import Login from "./components/auth/Login";
@@ -24,22 +25,68 @@ import routes from "tempo-routes";
 
 function App() {
   const { user, loading } = useAuth();
+  const [showAuthFallback, setShowAuthFallback] = useState(false);
+  const navigate = useNavigate();
 
-  // Show loading spinner while determining auth state
-  if (loading) {
+  // Handle authentication state changes and redirect to dashboard
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session && user) {
+        console.log("User is authenticated, redirecting to dashboard");
+        navigate("/dashboard");
+      }
+    };
+
+    // Check session on mount
+    if (user && !loading) {
+      checkSession();
+    }
+
+    // Listen for auth state changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("App: Auth state changed:", event, !!session);
+      if (event === "SIGNED_IN" && session) {
+        console.log("User signed in, redirecting to dashboard");
+        navigate("/dashboard");
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [user, loading, navigate]);
+
+  // Add a fallback mechanism if loading takes too long
+  useEffect(() => {
+    if (loading) {
+      const fallbackTimer = setTimeout(() => {
+        console.warn("Loading took too long, showing auth screen");
+        setShowAuthFallback(true);
+      }, 1500); // Reduced to 1.5 seconds
+
+      return () => clearTimeout(fallbackTimer);
+    } else {
+      setShowAuthFallback(false);
+    }
+  }, [loading]);
+
+  // Show auth screen if user is not authenticated
+  if (!user) {
+    return <AuthScreen />;
+  }
+
+  // Show minimal loading only for very brief moments
+  if (loading && !showAuthFallback) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
         </div>
       </div>
     );
-  }
-
-  // Show auth screen if user is not authenticated
-  if (!loading && !user) {
-    return <AuthScreen onAuthComplete={() => {}} />;
   }
 
   // User is authenticated, show the main app

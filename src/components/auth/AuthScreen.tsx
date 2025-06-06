@@ -1,60 +1,34 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import LoginForm from "./LoginForm";
 import SignUpForm from "./SignUpForm";
-import OnboardingScreen from "./OnboardingScreen";
+import { useNavigate } from "react-router-dom";
 
-interface AuthScreenProps {
-  onAuthComplete: () => void;
-}
+export default function AuthScreen() {
+  const { user } = useAuth();
+  const [view, setView] = useState<"login" | "signup">("login");
+  const navigate = useNavigate();
 
-export default function AuthScreen({ onAuthComplete }: AuthScreenProps) {
-  const { user, loading } = useAuth();
-  const [isLogin, setIsLogin] = useState(true);
-  const [showOnboarding, setShowOnboarding] = useState(false);
-
-  // Show onboarding for new users (you can customize this logic)
-  React.useEffect(() => {
+  // Redirect to dashboard when user is authenticated
+  useEffect(() => {
     if (user) {
-      // Check if this is a new user (you might want to add a flag to track this)
-      const isNewUser = !user.last_login;
-      if (isNewUser && !showOnboarding) {
-        setShowOnboarding(true);
-      } else if (!isNewUser) {
-        onAuthComplete();
-      }
+      navigate("/dashboard");
     }
-  }, [user, showOnboarding, onAuthComplete]);
+  }, [user, navigate]);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
+  // If user is authenticated, don't render anything (redirect will happen)
+  if (user) {
+    return null;
   }
 
-  if (user && showOnboarding) {
-    return (
-      <OnboardingScreen
-        onComplete={() => {
-          setShowOnboarding(false);
-          onAuthComplete();
-        }}
-      />
-    );
-  }
-
+  // Always show auth forms - no loading screens
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {isLogin ? (
-          <LoginForm onSwitchToSignUp={() => setIsLogin(false)} />
+        {view === "login" ? (
+          <LoginForm onSwitchToSignUp={() => setView("signup")} />
         ) : (
-          <SignUpForm onSwitchToLogin={() => setIsLogin(true)} />
+          <SignUpForm onSwitchToLogin={() => setView("login")} />
         )}
       </div>
     </div>

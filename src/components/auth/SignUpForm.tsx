@@ -250,7 +250,18 @@ export default function SignUpForm({ onSwitchToLogin }: SignUpFormProps) {
     });
 
     if (signUpError) {
-      setError(signUpError);
+      // Handle specific OAuth configuration errors with more user-friendly message
+      let displayError = signUpError;
+      if (
+        signUpError.includes("OAuth authorization request does not exist") ||
+        signUpError.includes(
+          "Failed to fetch details for API authorization request",
+        )
+      ) {
+        displayError =
+          "Authentication service is temporarily unavailable. Please try again later or contact support.";
+      }
+      setError(displayError);
       return;
     }
 
@@ -356,7 +367,7 @@ export default function SignUpForm({ onSwitchToLogin }: SignUpFormProps) {
                 onClick={onSwitchToLogin}
                 className="w-full h-12 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] shadow-lg hover:shadow-xl"
               >
-                Go to Sign In
+                Go to Log In
               </Button>
 
               <Button
@@ -834,7 +845,7 @@ export default function SignUpForm({ onSwitchToLogin }: SignUpFormProps) {
                   className="text-sm text-gray-600 hover:text-blue-600 transition-colors duration-300 font-medium"
                 >
                   Already have an account?{" "}
-                  <span className="text-blue-600 underline">Sign in</span>
+                  <span className="text-blue-600 underline">Log in</span>
                 </Button>
               </div>
             </form>
